@@ -1,0 +1,143 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "A Röthig"
+date: "27 September 2015"
+output: html_document
+---
+
+## Summary
+The following report presents a machine learning algorithm for classifying the activity quality of some Unilateral Dumbbell Biceps Curl exercises from some activity monitors recorded in the given dataset presented in [Ugulino, W. et.all (2012)].   
+
+## Dataset description
+
+The quality of the exercise is quantified in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). The set contains the sensor data from four sensors positioned in different places on the body of the participant and on the dumbell. The positions are belt, forearm, arm and dumbell. The variables of the dataset are features on the roll, pitch and yaw angles over a period of time, and the raw accelerometer, gyroscope and magnetometer readings. Features on the Euler angles are mean, variance,
+standard deviation, max, min, amplitude, kurtosis and skewness. There were six participants that were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in the five different fashions.
+
+## Loading the data
+
+The follwing code chunk downloads the data and loads it in two data frames.
+
+```{r expl1, eval = F}
+# download the data
+if (!file.exists("pml-training.csv"))
+{
+  train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+  download.file(train_url,destfile = "pml-training.csv")  
+}
+
+if (!file.exists("pml-testing.csv"))
+{
+  test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  download.file(test_url,destfile = "pml-testing.csv")  
+}
+
+# load the data
+DF_train <- read.csv("pml-training.csv")
+DF_test <- read.csv("pml-testing.csv")
+
+# load packages
+require(caret)
+require(ggplot2)
+require(rattle)
+require(rpart)
+require(dplyr)
+```
+
+## Data processing
+
+The following steps were taken in processing the data:
+
+1. Variables with zero-variance were taken out from the list of possible predictors.
+
+```{r proc1, eval = F}
+# check and throw out all variables with no variability
+nsv <- nearZeroVar(DF_train,saveMetrics=T)
+DF_train_subcol <- DF_train[rownames(nsv[nsv$nzv == F,])]
+```
+
+2. Factor variables containing the subject identification and time variables were also taken out from the list of possible predictors.
+
+```{r proc2,eval = F}
+# take out the non-predictors (user_name)
+DF_train_subcol.pred <- select(DF_train_subcol,-c(1:6))
+```
+
+3. From the 94 remaining (numeric) variables, the ones with many NA's were also taken out from the list of possible predictors.
+
+```{r proc3, eval =F}
+# take variables with not so many na's
+pct_na <- unlist(lapply(DF_train_subcol.pred, function(x) mean(is.na(x))))
+DF_train_subcol.pred.clean <- DF_train_subcol.pred[,names(which(pct_na <= .1))]
+```
+
+4. The variables with a pair-wise correlation (absolute value) higher than .75 were computed, and the each time, the one with the largest mean absolute correlation was removed.
+
+```{r proc4,eval =F}
+# find correlated variables
+descrCor <-  cor(DF_train_subcol.pred.clean[,-53],use = "complete.obs")
+summary(descrCor[upper.tri(descrCor)])
+# take variables with max .75 correlation
+highlyCorDescr <- findCorrelation(descrCor, cutoff = .75)
+DF_train_subcol.pred.clean <- DF_train_subcol.pred.clean[,-highlyCorDescr]
+
+# check
+lastcol <- ncol(DF_train_subcol.pred.clean)
+descrCor2 <- cor(DF_train_subcol.pred.clean[,-lastcol])
+summary(descrCor2[upper.tri(descrCor2)])
+```
+
+5. Splitting the data in a training and testing set.
+
+```{r split,eval = F}
+# split the given data in training and splitting data to avoid overfitting
+inTrain  <- createDataPartition(y=DF_train_subcol.pred.clean$classe, p= .75, list = F)
+training <- DF_train_subcol.pred.clean[ inTrain,]
+testing  <- DF_train_subcol.pred.clean[-inTrain,]
+```
+
+## Training the model
+
+The used method is Random Forest with (two times) repeated Cross-Validation.
+
+```{r training, eval = F}
+# training
+train_control <- trainControl(method="repeatedcv", 
+                                number = 10, repeats = 2,allowParallel = T)
+
+# train the model 
+modFit <- train(classe ~ ., data=training, 
+               method="rf", trControl=train_control)
+
+# print results
+print(modFit$finalModel)
+modFit
+```
+
+## Results
+
+The classification results on the test data set are given in the following code chunk.
+
+```{r loaded res, echo = F, warning=F,message=F}
+require(caret)
+if (file.exists('environm.RData')) load('environm.RData')
+predictions <- predict(modFit, newdata = testing)
+
+```
+
+```{r resul, eval=T}
+# make predictions
+predictions <- predict(modFit, newdata = testing)
+# summarize results
+print(confusionMatrix(predictions,testing$classe))
+```
+
+### Expected out-of-sample error
+
+An estimate of the out-of-sample error rate can be given as the proportion of misclassified instances to the total number of instances. This is equal to 1 - Accuracy, given by the code chunk above. Thus, the estimate is 0.0075. Since the training algorithmus applied the repeated Cross-Validation method, the estimate 0.0075 is an estimate of the averaged out-of-sample error rate from each of the two repetitions (repeats = 2).
+
+## Literature
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3mvKimgZw
+
